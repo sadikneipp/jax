@@ -1027,8 +1027,8 @@ class VectorLayoutInferer {
       CHECK_EQ(tile_offsets.size(), 1);
       // TODO(apaszke): We could generate replicated loads for short values.
       setLayout(op, in_layout,
-                VectorLayout(bitwidth, {0, tile_offsets[0]}, {1, tile},
-                             ImplicitDim::kSecondMinor));
+                VectorLayout(bitwidth, {0, tile_offsets[0] % target_shape_[1]},
+                             {1, target_shape_[1]}, ImplicitDim::kSecondMinor));
     } else {  // rank >= 2
       TPU_CHECK_OP(tiling.size() == 2, "Expected 2D tiling in 2D+ loads");
       CHECK_EQ(tile_offsets.size(), 2);
@@ -1367,8 +1367,9 @@ class VectorLayoutInferer {
       TPU_CHECK_OP(tile % target_shape_[1] == 0,
                    "Unsupported 1D tiling for 1D store");
       CHECK_EQ(tile_offsets.size(), 1);
-      store_layout = VectorLayout(bitwidth, {0, tile_offsets[0]}, {1, tile},
-                                  ImplicitDim::kSecondMinor);
+      store_layout =
+          VectorLayout(bitwidth, {0, tile_offsets[0] % target_shape_[1]},
+                       {1, target_shape_[1]}, ImplicitDim::kSecondMinor);
     } else {  // rank >= 2  // NOLINT(readability-else-after-return)
       TPU_CHECK_OP(tiling.size() == 2, "Expected 2D tiling in 2D+ store");
       CHECK_EQ(tile_offsets.size(), 2);
