@@ -24,29 +24,27 @@ from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as np
-
 import jax
-from jax._src import core
 from jax import lax
-import jax.numpy as jnp
-from jax.test_util import check_grads
-import jax.util
-
-from jax.interpreters import batching
-from jax.interpreters import xla
 from jax._src import array
 from jax._src import config
+from jax._src import core
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
+from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_extension_version
+from jax._src.tree_util import tree_map, tree_reduce
 from jax._src.util import NumpyComplexWarning
+from jax.interpreters import batching
+from jax.interpreters import xla
+import jax.numpy as jnp
+from jax.test_util import check_grads
+import jax.util
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -68,6 +66,27 @@ preferred_type_combinations = [
   (np.int16, np.float16), (np.int16, dtypes.bfloat16), (np.int16, np.float32), (np.int16, np.float64),
   (np.int32, np.float32), (np.int32, np.float64), (np.int64, np.float64)]
 
+
+def _reduce_custom_add(x, y):
+  return x + y
+
+def _reduce_custom_mul(x, y):
+  return x * y
+
+def _reduce_custom_sub(x, y):
+  return x - y
+
+def _reduce_custom_min(x, y):
+  return jnp.minimum(x, y)
+
+def _reduce_custom_max(x, y):
+  return jnp.maximum(x, y)
+
+
+def _custom_reduce_busy(x, y):
+  z = lax.cos(x)
+  z2 = lax.sin(y)
+  return z + z2
 
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
@@ -1800,35 +1819,290 @@ class LaxTest(jtu.JaxTestCase):
     # we separately test the version that uses a concrete init_val because it
     # can hit different code paths
     def fun(operand):
-      return lax.reduce_window(operand, init_val, op, dims, strides, padding,
-                               base_dilation, window_dilation)
+      return lax.reduce_window(
+          operand,
+          init_val,
+          op,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
 
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
 
+  # TODO(voz): I broke these out to their own test for 2 reasons:
+  # 1. I wanted to show that general ops work, there's a small subset of
+  # ops, specifically, the ones used in the test above, lax.add, lax.max, and
+  # lax.min that actually route to a monoid operator that *doesn't* pass JVP
+  # tests.
+  # 2. Slightly different parameterization.
   @jtu.sample_product(
-    [dict(shape=shape, dims=dims, strides=strides, padding=padding,
-          base_dilation=base_dilation, window_dilation=window_dilation)
-      for shape, dims, strides, padding, base_dilation, window_dilation in (
-        itertools.chain(
-          itertools.product(
-            [(4, 6)],
-            [(2, 1), (1, 2)],
-            [(1, 1), (2, 1), (1, 2)],
-            ["VALID", "SAME", [(0, 3), (1, 2)]],
-            [(1, 1), (2, 3)],
-            [(1, 1), (1, 2)]),
-          itertools.product(
-            [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
-            [(1, 2, 2, 1), (1, 1, 1, 1)],
-            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
-            [(1, 1, 1, 1), (2, 1, 3, 2)],
-            [(1, 1, 1, 1), (1, 2, 2, 1)])))
-    ],
-    dtype=[np.float32],
+      [
+          dict(init_val=init_val, op=op, dtype=dtype)
+          for init_val, op, dtypes in [
+              (0, _reduce_custom_add, [np.float32]),
+              (1, _reduce_custom_add, [np.float32]),
+              (0, _reduce_custom_mul, [np.float32]),
+              (0, _reduce_custom_sub, [np.float32]),
+              (1, _reduce_custom_add, [np.float32]),
+              (1, _reduce_custom_mul, [np.float32]),
+              (1, _custom_reduce_busy, [np.float32]),
+          ]
+          for dtype in dtypes
+      ],
+      [
+          dict(
+              shape=shape,
+              dims=dims,
+              strides=strides,
+              padding=padding,
+              base_dilation=base_dilation,
+              window_dilation=window_dilation,
+          )
+          for shape, dims, strides, padding, base_dilation, window_dilation in (
+              itertools.chain(
+                  itertools.product(
+                      [(4, 6)],
+                      [(2, 1), (1, 2)],
+                      [(1, 1), (2, 1), (1, 2)],
+                      ['VALID', 'SAME', [(0, 3), (1, 2)]],
+                      [(1, 1), (2, 3)],
+                      [(1, 1), (1, 2)],
+                  ),
+                  itertools.product(
+                      [(3, 2, 4, 6)],
+                      [(1, 1, 2, 1), (2, 1, 2, 1)],
+                      [(1, 2, 2, 1), (1, 1, 1, 1)],
+                      ['VALID', 'SAME', [(0, 1), (1, 0), (2, 3), (0, 2)]],
+                      [(1, 1, 1, 1), (2, 1, 3, 2)],
+                      [(1, 1, 1, 1), (1, 2, 2, 1)],
+                  ),
+              )
+          )
+      ],
   )
+  def testReduceWindowGeneralJVP(
+      self,
+      op,
+      init_val,
+      dtype,
+      shape,
+      dims,
+      strides,
+      padding,
+      base_dilation,
+      window_dilation,
+  ):
+    rng = jtu.rand_small(self.rng())
+    init_val = np.asarray(init_val, dtype=dtype)
+
+    def fun(operand, init_val):
+      return lax.reduce_window(
+          operand,
+          init_val,
+          op,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
+
+    args_maker = lambda: [rng(shape, dtype), init_val]
+    self._CompileAndCheck(fun, args_maker)
+    args = args_maker()
+    operand = args[0]
+    init_val = args[1]
+    jtu.check_jvp(fun, partial(jax.jvp, fun), (operand, init_val))
+
+    # we separately test the version that uses a concrete init_val because it
+    # can hit different code paths
+    def fun(operand):
+      return lax.reduce_window(
+          operand,
+          init_val,
+          op,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
+
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker)
+
+    operand = args_maker()[0]
+    jtu.check_jvp(fun, partial(jax.jvp, fun), (operand,))
+
+  @jtu.sample_product(
+      [
+          dict(init_val=init_val, op=op, dtype=dtype)
+          for init_val, op, dtypes in [
+              (-np.inf, lax.max, [np.float32]),
+              (np.inf, lax.min, [np.float32]),
+              (0, lax.add, [np.float32]),
+          ]
+          for dtype in dtypes
+      ],
+      [
+          dict(
+              shape=shape,
+              dims=dims,
+              strides=strides,
+              padding=padding,
+              base_dilation=base_dilation,
+              window_dilation=window_dilation,
+          )
+          for shape, dims, strides, padding, base_dilation, window_dilation in (
+              itertools.chain(
+                  itertools.product(
+                      [(4, 6)],
+                      [(2, 1), (1, 2)],
+                      [(1, 1), (2, 1), (1, 2)],
+                      ['VALID', 'SAME', [(0, 3), (1, 2)]],
+                      [(1, 1), (2, 3)],
+                      [(1, 1), (1, 2)],
+                  ),
+                  itertools.product(
+                      [(3, 2, 4, 6)],
+                      [(1, 1, 2, 1), (2, 1, 2, 1)],
+                      [(1, 2, 2, 1), (1, 1, 1, 1)],
+                      ['VALID', 'SAME', [(0, 1), (1, 0), (2, 3), (0, 2)]],
+                      [(1, 1, 1, 1), (2, 1, 3, 2)],
+                      [(1, 1, 1, 1), (1, 2, 2, 1)],
+                  ),
+              )
+          )
+      ],
+  )
+  def testReduceWindowCustomSameAsMonoid(
+      self,
+      op,
+      init_val,
+      dtype,
+      shape,
+      dims,
+      strides,
+      padding,
+      base_dilation,
+      window_dilation,
+  ):
+    rng = jtu.rand_small(self.rng())
+    init_val = np.asarray(init_val, dtype=dtype)
+
+    def fun(op_, operand_, init_val_):
+      return lax.reduce_window(
+          operand_,
+          init_val_,
+          op_,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
+
+    args_maker = lambda: [rng(shape, dtype), init_val]
+    args = args_maker()
+    operand = args[0]
+    init_val = args[1]
+    rng = np.random.RandomState(0)
+    tangent = tree_map(partial(jtu.rand_like, rng), operand)
+    # Init val tangent is *always* a zero, it comes from a constant.
+    tangent_init_val = np.asarray(0.0, dtype=dtype)
+
+    # There are "special" paths for "monoid" ops that have
+    # their jvp defined separately, either for legacy reasons
+    # or for optimization - compare across both and prove
+    # that their jvp is the same.
+    # TODO(voz): Look into the "monoid" paths and collapse them as necessary.
+    # Especially when we go to add support for (1) recursive is_jvp (hessians),
+    # and (2) transpose?
+    custom_equiv = {
+        lax.max: _reduce_custom_max,
+        lax.min: _reduce_custom_min,
+        lax.add: _reduce_custom_add,
+    }
+    custom_op = custom_equiv[op]
+    custom_primals, custom_tangents = jax.jvp(
+        partial(fun, custom_op),
+        primals=(operand, init_val),
+        tangents=(tangent, tangent_init_val),
+    )
+    lax_primals, lax_tangents = jax.jvp(
+        partial(fun, op),
+        primals=(operand, init_val),
+        tangents=(tangent, tangent_init_val),
+    )
+    # tol = 1e-4
+    # None is sane defaults, but useful to have here for debugging.
+    tol = None
+    jtu.check_close(
+        lax_primals,
+        custom_primals,
+        atol=tol,
+        rtol=tol,
+        err_msg=f'Mismatched primal',
+    )
+    jtu.check_close(
+        lax_tangents,
+        custom_tangents,
+        atol=tol,
+        rtol=tol,
+        err_msg=f'Mismatched tangents',
+    )
+
+    # Numerical jvp comparison for min and max values
+    # does not work - the underlying implementation nans on infs.
+    if init_val.item() in (np.inf, -np.inf):
+      return
+    op_bound_fn = partial(fun, op)
+    jtu.check_jvp(
+        op_bound_fn,
+        partial(jax.jvp, op_bound_fn),
+        (operand),
+        constants=(init_val,),
+    )
+
   # TODO(b/183233858): variadic reduce-window is not implemented on XLA:GPU
-  @jtu.skip_on_devices("gpu")
+  @jtu.sample_product(
+      [
+          dict(
+              shape=shape,
+              dims=dims,
+              strides=strides,
+              padding=padding,
+              base_dilation=base_dilation,
+              window_dilation=window_dilation,
+          )
+          for shape, dims, strides, padding, base_dilation, window_dilation in (
+              itertools.chain(
+                  itertools.product(
+                      [(4, 6)],
+                      [(2, 1), (1, 2)],
+                      [(1, 1), (2, 1), (1, 2)],
+                      ['VALID', 'SAME', [(0, 3), (1, 2)]],
+                      [(1, 1), (2, 3)],
+                      [(1, 1), (1, 2)],
+                  ),
+                  itertools.product(
+                      [(3, 2, 4, 6)],
+                      [(1, 1, 2, 1), (2, 1, 2, 1)],
+                      [(1, 2, 2, 1), (1, 1, 1, 1)],
+                      ['VALID', 'SAME', [(0, 1), (1, 0), (2, 3), (0, 2)]],
+                      [(1, 1, 1, 1), (2, 1, 3, 2)],
+                      [(1, 1, 1, 1), (1, 2, 2, 1)],
+                  ),
+              )
+          )
+      ],
+      dtype=[np.float32],
+  )
+  @jtu.skip_on_devices('gpu')
   def testReduceWindowVariadic(self, dtype, shape, dims, strides, padding,
                                base_dilation, window_dilation):
     if (jtu.test_device_matches(["tpu"]) and
@@ -2727,21 +3001,20 @@ class LaxTest(jtu.JaxTestCase):
   def test_constant_folding_complex_to_real_scan_regression(self):
     # regression test for github.com/google/jax/issues/19059
     def g(hiddens):
-        hiddens_aug = jnp.vstack((hiddens[0], hiddens))
-        new_hiddens = hiddens_aug.copy()
-        diff = new_hiddens[:-1] - hiddens
-        diff = new_hiddens[:-1] - hiddens
-        out = jnp.trace(jnp.conj(diff).T @ diff).real
-        return jnp.array(out, dtype=jnp.complex64)
-
+      hiddens_aug = jnp.vstack((hiddens[0], hiddens))
+      new_hiddens = hiddens_aug.copy()
+      diff = new_hiddens[:-1] - hiddens
+      diff = new_hiddens[:-1] - hiddens
+      out = jnp.trace(jnp.conj(diff).T @ diff).real
+      return jnp.array(out, dtype=jnp.complex64)
 
     def _step(carry, arg):
-        primals, f_vjp = jax.vjp(
-            g,
-            jax.random.normal(jax.random.key(0), (9, 8), dtype=jnp.complex64),
-        )
-        out = f_vjp(np.array(1.0 + 0j, 'complex64'))[0]
-        return carry, carry
+      primals, f_vjp = jax.vjp(
+          g,
+          jax.random.normal(jax.random.key(0), (9, 8), dtype=jnp.complex64),
+      )
+      out = f_vjp(np.array(1.0 + 0j, 'complex64'))[0]
+      return carry, carry
 
     a, b = jax.lax.scan(_step, 0, jnp.arange(4, dtype=jnp.complex64))
 

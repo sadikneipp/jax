@@ -1065,6 +1065,30 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
         "at https://github.com/google/jax.")
   return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
+
+@cache()
+def _variadic_reduction_jaxpr_jvp(
+    computation,
+    flat_avals,
+    aval_tree,
+):
+  avals = tree_util.tree_unflatten(aval_tree, flat_avals)
+  primal = avals[0]
+  tangent = avals[1]
+  flat_in_avals, in_tree = tree_util.tree_flatten(((primal, primal), (tangent, tangent)))
+  comp = lu.wrap_init(computation)
+  flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
+      flat_comp, tuple(flat_in_avals)
+  )
+  if any(isinstance(c, core.Tracer) for c in consts):
+    raise NotImplementedError(
+        "Reduction computations can't close over Tracers. Please open an issue "
+        'at https://github.com/google/jax.'
+    )
+  return core.ClosedJaxpr(jaxpr, consts), out_tree()
+
+
 def _get_monoid_reducer(monoid_op: Callable,
                         xs: Sequence[Array]) -> Callable | None:
   if len(xs) != 1:
