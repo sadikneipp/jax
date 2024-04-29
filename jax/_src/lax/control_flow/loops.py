@@ -1236,7 +1236,9 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   new_in_avals = [*remaining_const_avals, *[a.inner_aval for a in in_ref_avals],
                   *carry_avals,
                   *[core.mapped_aval(length, 0, a) for a in xs_avals]]
-  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(wrapped), new_in_avals)
+  newer_in_avals = [aval.inner_aval if isinstance(aval, state.AbstractRef) else aval
+                    for aval in new_in_avals]
+  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(wrapped), newer_in_avals)
   new_linear = (*remaining_consts_linear, *in_refs_linear,
                 *carry_linear, *xs_linear)
   all_out = scan_p.bind(*remaining_consts, *in_refs, *carry, *xs,
