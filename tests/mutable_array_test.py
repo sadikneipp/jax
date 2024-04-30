@@ -14,41 +14,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from functools import partial
-import itertools as it
-from typing import Any, Callable, NamedTuple, Union
-
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
 import jax
-from jax import random
 from jax import lax
 from jax._src import core
 from jax._src import config
-from jax._src import linear_util as lu
-from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
-from jax._src.util import tuple_insert
 import jax.numpy as jnp
-from jax._src.lax.control_flow import for_loop
 
-try:
-  import hypothesis as hp
-  import hypothesis.extra.numpy as hnp
-  import hypothesis.strategies as hps
-  CAN_USE_HYPOTHESIS = True
-except (ModuleNotFoundError, ImportError):
-  CAN_USE_HYPOTHESIS = False
-
-from jax._src.state.discharge import (run_state, run_state_reference,
-                                      discharge_state)
-from jax._src.state.primitives import (get_p, swap_p, addupdate_p,
-                                       ref_addupdate, ref_get, ref_set,
-                                       ref_swap)
-from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
-                                  AccumEffect, RefEffect, AbstractRef)
+from jax._src.state.types import (RefEffect)
 
 config.parse_flags_with_absl()
 
