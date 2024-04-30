@@ -48,7 +48,7 @@ from jax._src.state.primitives import (get_p, swap_p, addupdate_p,
                                        ref_addupdate, ref_get, ref_set,
                                        ref_swap)
 from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
-                                  AccumEffect, RefEffect, AbstractRef)
+                                  AccumEffect, AbstractRef)
 
 config.parse_flags_with_absl()
 

@@ -18,7 +18,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
 import jax
-from jax import lax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
